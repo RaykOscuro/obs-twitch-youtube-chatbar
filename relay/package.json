@@ -1,0 +1,14 @@
+{
+  "name": "obs-twitch-youtube-chatbar",
+  "private": true,
+  "description": "Relay that lets an OBS browser source read YouTube live chat",
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "deploy": "npx wrangler deploy"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

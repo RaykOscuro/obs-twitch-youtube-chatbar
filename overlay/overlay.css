@@ -1,0 +1,290 @@
+/* Values come from config.js; overlay.js writes them onto :root at load, so
+   these defaults only apply if a setting is missing there. */
+:root {
+  --font-family: Montserrat, sans-serif;
+  --font-size: 24px;
+  --font-weight: 700;
+  --font-color: rgba(255, 255, 255, 1);
+  --text-shadow: rgb(0, 0, 0) 1px 1px 1px;
+  --bg-color: rgba(0, 0, 0, 0.2);
+  --highlight-color: #a400ff;
+  --pad-right: 8px;
+  --fade-left: 8px;
+  --v-align: center;
+  --max-msg-width: 33%;
+  --max-name-width: 12em;
+  --divider-color: rgba(255, 255, 255, 0.25);
+  --msg-gap: 8px;
+  --anim-duration: 0.5s;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The background sits on body, not .main-container: the container's fade
+   mask would fade the background too. */
+body {
+  background: var(--bg-color);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;   /* so max-width caps the whole box, padding included */
+}
+
+* {
+  font-family: var(--font-family);
+  color: var(--font-color);
+  font-weight: var(--font-weight);
+  text-shadow: var(--text-shadow);
+}
+
+/* Fills the browser source; the bar height is the source height. */
+.main-container {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: row-reverse;   /* first child in the DOM sits at the right */
+  align-items: var(--v-align);
+  justify-content: flex-start;
+  white-space: nowrap;
+  overflow: hidden;
+  padding-right: var(--pad-right);
+  box-sizing: border-box;
+
+  /* Fades messages out at the left edge. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left));
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left));
+}
+
+/* Status line over the right end of the bar, e.g. a Twitch sign-in code. */
+.notice {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--pad-right) 0 0.6em;
+  font-size: calc(var(--font-size) * 0.8);
+  white-space: nowrap;
+  background: rgba(20, 20, 28, 0.92);
+  border-left: 3px solid #9146ff;
+}
+
+/* display: flex above would otherwise override the hidden attribute. */
+.notice[hidden] {
+  display: none;
+}
+
+/* New rows are prepended and, with row-reverse, sit rightmost. flex: 0 0 auto
+   keeps rows from shrinking instead of overflowing. */
+.message-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 2px 4px;
+  font-size: var(--font-size);
+}
+
+.message-row.leaving {
+  transition: opacity var(--anim-duration) ease-in,
+              transform var(--anim-duration) ease-in;
+  opacity: 0;
+}
+
+.message-row.leaving.slide {
+  transform: translateX(40px);
+}
+
+.message-row.leaving.bounce {
+  transform: scale(0.6);
+}
+
+.user-box,
+.user-message {
+  font-size: var(--font-size);
+}
+
+/* Outside the message width cap, so every message gets the same text space
+   whether it shows a name or a continuation marker. */
+.user-box {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-right: 0.25em;
+  white-space: nowrap;
+}
+
+/* Only the name clips; the platform icon and separator are outside its cap. */
+.user-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: var(--max-name-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Never shrinks, so the separator stays visible. */
+.name-sep {
+  flex: 0 0 auto;
+}
+
+/* min-width:0 is what allows a flex item to be narrower than its content. */
+.user-message {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: var(--max-msg-width);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Resting state after scrolling. The scroller becomes inline because
+   text-overflow shows no ellipsis for an inline-block child. */
+.user-message.truncated {
+  text-overflow: ellipsis;
+}
+
+.user-message.truncated .message-scroll {
+  display: inline;
+}
+
+.message-scroll {
+  display: inline-block;
+  will-change: transform;
+}
+
+.continuation {
+  margin-right: 0.15em;
+  opacity: 0.85;
+}
+
+/* Optional divider between messages, off unless messageDivider.style is set.
+   It hangs on the left of each row, so the leftmost (oldest) row skips it. */
+.main-container[data-divider='line'] .message-row::before,
+.main-container[data-divider='dot'] .message-row::before {
+  content: '';
+  flex: 0 0 auto;
+  align-self: center;
+  margin-right: var(--msg-gap);
+}
+
+.main-container[data-divider='line'] .message-row::before {
+  width: 0;
+  height: 1.05em;
+  border-left: 1px solid var(--divider-color);
+}
+
+.main-container[data-divider='dot'] .message-row::before {
+  width: 0.25em;
+  height: 0.25em;
+  border-radius: 50%;
+  background: var(--divider-color);
+}
+
+.main-container .message-row:last-child::before {
+  display: none;
+}
+
+/* Pause, scroll, pause, return. setupLongMessage in overlay.js assumes the
+   movement takes 64% of the duration (12% to 76%); keep them in sync. */
+@keyframes msg-scroll {
+  0%, 12% { transform: translateX(0); }
+  76%, 88% { transform: translateX(calc(-1 * var(--scroll-distance, 0px))); }
+  100% { transform: translateX(0); }
+}
+
+.action {
+  font-style: italic;
+}
+
+.highlight {
+  background-color: var(--highlight-color);
+  border-radius: 4px;
+}
+
+.avatar {
+  display: inline-block;
+  position: relative;
+  height: 1em;
+  width: 1em;
+  object-fit: cover;
+  vertical-align: middle;
+  border-radius: 3px;
+  margin-right: 0.2em;
+}
+
+.badge {
+  display: inline-block;
+  position: relative;
+  height: 1em;
+  vertical-align: middle;
+  top: -2px;
+  margin-right: 0.15em;
+}
+
+/* YouTube's mod/owner/verified badges are icon types with no image URL,
+   so they render as small labelled chips instead. */
+.badge-chip {
+  display: inline-block;
+  vertical-align: middle;
+  top: -2px;
+  position: relative;
+  margin-right: 0.25em;
+  padding: 0 0.35em;
+  border-radius: 3px;
+  font-size: 0.55em;
+  font-weight: 700;
+  line-height: 1.6;
+  color: #000;
+  text-shadow: none;
+}
+
+.platform-icon {
+  display: inline-block;
+  height: 0.85em;
+  width: 0.85em;
+  vertical-align: middle;
+  margin-right: 0.25em;
+  top: -1px;
+  position: relative;
+}
+
+.emote {
+  display: inline-block;
+  position: relative;
+  height: 1.3em;
+  vertical-align: middle;
+  margin: 0 0.05em;
+}
+
+/* Entrance animations. The width reveal is applied inline by overlay.js;
+   these layer opacity/transform on top of it. */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* The width reveal already moves the row in; this adds a fade and a glide. */
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes bounceIn {
+  0% { opacity: 0; transform: scale(0.3); }
+  60% { opacity: 1; transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.anim-fadeIn { animation: fadeIn var(--anim-duration) ease-out; }
+.anim-slideInRight { animation: slideInRight var(--anim-duration) cubic-bezier(0.16, 1, 0.3, 1); }
+.anim-bounceIn { animation: bounceIn var(--anim-duration) ease-out; }

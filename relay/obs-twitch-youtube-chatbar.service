@@ -1,0 +1,18 @@
+# systemd unit for running the relay (and overlay) on an always-on Linux machine.
+# Copy to /etc/systemd/system/, then replace YOUR_USER and the paths below with
+# the account that should run it and the location of the repository.
+
+[Unit]
+Description=Chat relay and overlay server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /home/YOUR_USER/obs-twitch-youtube-chatbar/relay/server.mjs 8788
+WorkingDirectory=/home/YOUR_USER/obs-twitch-youtube-chatbar
+User=YOUR_USER
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
