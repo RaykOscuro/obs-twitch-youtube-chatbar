@@ -8,7 +8,8 @@ window.CHAT_CONFIG = {
     // Login name, as in twitch.tv/<name>.
     "channel": "",
     // Twitch badges and avatars, shown with appearance.showBadges and showAvatar.
-    // Needs a one-time sign-in: the bar shows a code to enter at twitch.tv/activate.
+    // Needs a one-time sign-in: a code appears in the overlay, to be entered at
+    // twitch.tv/activate.
     "apiFeatures": false,
     // Client ID of the public Twitch application used for that sign-in.
     // Public identifier, not a secret; replace it to use your own application.
@@ -52,6 +53,12 @@ window.CHAT_CONFIG = {
     "ignoreShorterThan": 0
   },
   "appearance": {
+    // "bar" scrolls sideways, "list" stacks messages with the newest at the
+    // bottom. "auto" takes the bar for sources at least twice as wide as tall.
+    "layout": "auto",
+    // Where new messages appear: "right" or "left" in the bar, "bottom" or
+    // "top" in the list. "auto" uses right and bottom.
+    "newestAt": "auto",
     // Hard cap on rows kept; trimOffscreen normally removes rows first.
     "messagesLimit": 50,
     // Seconds before a message is removed regardless of newer chat; 0 = never.
@@ -61,13 +68,13 @@ window.CHAT_CONFIG = {
       // Stylesheet URL or font file (.woff2/.ttf); "" uses a system font.
       "url": "fonts/montserrat.css",
       "weight": "700",
-      // Pixels, or "auto": source height / 1.75 for sources up to 200px tall,
-      // otherwise 24.
+      // Pixels, or "auto": in the bar the source height / 1.75, falling back to
+      // 24 above 200px tall; in the list the source width / 20.
       "size": "auto"
     },
     "fontColor": "rgba(255,255,255,1)",
     "textShadow": "rgb(0, 0, 0) 1px 1px 1px",
-    // Bar background; covers the whole browser source.
+    // Background; covers the whole browser source.
     "bgColor": "rgba(0, 0, 0, 0.2)",
     // Background of highlighted Twitch messages and YouTube Super Chats.
     "highlightColor": "#A400FF",
@@ -77,11 +84,11 @@ window.CHAT_CONFIG = {
     "customNickColor": "rgb(0, 255, 0)",
     // Text between name and message.
     "separator": ":",
-    // false replaces the name on consecutive messages from the same chatter
-    // with continuationMarker.
+    // false drops the name on consecutive messages from the same chatter and
+    // shows continuationMarker instead. Bar only; the list always names them.
     "repeatNickname": false,
     "continuationMarker": "›",
-    // Separator between messages: "none", "line" or "dot".
+    // Separator between messages: "none", "line" or "dot". Bar only.
     "messageDivider": {
       "style": "none",
       "color": "rgba(255,255,255,0.25)",
@@ -90,15 +97,31 @@ window.CHAT_CONFIG = {
     // For Twitch messages, these also need twitch.apiFeatures.
     "showBadges": false,
     "showAvatar": false,
+    // Badge groups to show. Twitch sets not covered here, e.g. convention
+    // badges, count as "event".
+    "badgeKinds": {
+      "role": true,         // broadcaster, moderator, VIP, staff
+      "subscriber": true,   // channel subscribers and founders, YouTube members
+      "channel": false,     // bits, gifting, hype train, predictions
+      "account": false,     // Prime, Turbo
+      "event": false        // Twitch events and charity drives
+    },
+    // Most badges per message, role badges first; 0 = no limit.
+    "maxBadges": 2,
     "showPlatformIcon": true,
-    // Pixels between the newest message and the right edge.
+    // Twitch profile picture variant to request: 28, 50 or 70 pixels, snapped
+    // to the nearest of those. 0 keeps the 300x300 one the API returns, which
+    // the browser scales down.
+    "avatarPixels": 0,
+    // Pixels between the newest message and the edge it enters from.
     "paddingRight": 8,
-    // Pixels over which messages fade out at the left edge.
+    // Pixels over which messages fade out at the edge they leave by.
     "fadeLeft": 8,
     // "center", "top" or "bottom" within the source height.
     "verticalAlign": "center",
     "longMessages": {
-      // Width cap for message text: a CSS length, or % of the bar width.
+      // Width cap for message text in the bar: a CSS length, or % of the
+      // source width. The list wraps instead of capping.
       "maxWidth": "33%",
       // Width cap for the name; em scales with the font size.
       "maxNameWidth": "12em",
@@ -118,8 +141,13 @@ window.CHAT_CONFIG = {
     "animationOut": "fadeOut",
     // Seconds.
     "animationDuration": 0.5,
-    // Remove messages once they are fully past the left edge, which keeps the
-    // bar full regardless of message length.
-    "trimOffscreen": true
+    // Remove messages once they are fully past the far edge, which keeps the
+    // source filled regardless of message length.
+    "trimOffscreen": true,
+    // Settings for one layout only; they override the ones above while that
+    // layout is active, so one config can serve a bar in one scene and a list
+    // in another. Example: "list": { "newestAt": "top", "hideAfter": 30 }
+    "bar": {},
+    "list": {}
   }
 };

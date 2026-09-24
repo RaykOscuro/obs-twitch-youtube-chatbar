@@ -361,12 +361,14 @@ function badgesFromAuthor(authorBadges = []) {
   for (const b of authorBadges) {
     const r = b.liveChatAuthorBadgeRenderer;
     if (!r) continue;
+    // kind matches the overlay's badgeKinds groups: membership badges belong
+    // with subscribers, the icon badges with channel roles.
     const thumbs = r.customThumbnail?.thumbnails;
     if (thumbs?.length) {
-      out.push({ url: thumbs[thumbs.length - 1].url, title: r.tooltip ?? 'member' });
+      out.push({ url: thumbs[thumbs.length - 1].url, title: r.tooltip ?? 'member', kind: 'subscriber' });
     } else {
       const chip = ICON_CHIPS[r.icon?.iconType];
-      if (chip) out.push({ chip: chip.label, color: chip.color, title: r.tooltip ?? chip.label });
+      if (chip) out.push({ chip: chip.label, color: chip.color, title: r.tooltip ?? chip.label, kind: 'role' });
     }
   }
   return out;

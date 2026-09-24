@@ -10,6 +10,19 @@
   const IDLE_PROBE_MS = 60000;
   const PROBE_TIMEOUT_MS = 15000;
 
+  // Badge sets grouped for appearance.badgeKinds. Sets not listed here, such as
+  // convention and charity badges, count as "event".
+  const BADGE_KINDS = {
+    broadcaster: 'role', moderator: 'role', vip: 'role', staff: 'role', admin: 'role',
+    global_mod: 'role', partner: 'role', 'artist-badge': 'role', 'game-developer': 'role',
+    subscriber: 'subscriber', founder: 'subscriber',
+    bits: 'channel', 'bits-leader': 'channel', 'bits-charity': 'channel', moments: 'channel',
+    'sub-gifter': 'channel', 'sub-gift-leader': 'channel', 'hype-train': 'channel',
+    predictions: 'channel',
+    premium: 'account', turbo: 'account', 'glhf-pledge': 'account',
+    no_audio: 'account', no_video: 'account'
+  };
+
   const TAG_UNESCAPE = { '\\s': ' ', '\\:': ';', '\\\\': '\\', '\\r': '\r', '\\n': '\n' };
 
   function unescapeTagValue(v) {
@@ -56,10 +69,25 @@
     return { tags, prefix, command: params.shift(), params };
   }
 
+  // Twitch renders every emote at these heights.
+  const EMOTE_FILES = [[28, '1.0'], [56, '2.0'], [112, '3.0']];
+  // The profile picture sizes Twitch serves.
+  const AVATAR_SIZES = [28, 50, 70];
+
+  // pickEmoteImage comes from emotes.js, which index.html loads first; without
+  // it the middle size is used and scaled by the browser.
+  function emoteImage(id, target) {
+    const files = EMOTE_FILES.map(([height, size]) => ({
+      height,
+      url: `https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/${size}`
+    }));
+    return window.pickEmoteImage?.(files, target) ?? { url: files[1].url, h: null };
+  }
+
   // Splits text into text and emote parts using the IRC emotes tag. Its ranges
   // count code points, not UTF-16 units, hence Array.from: string indices would
   // misplace every emote after an emoji.
-  function buildParts(text, emotesTag) {
+  function buildParts(text, emotesTag, target) {
     const chars = Array.from(text);
     const ranges = [];
 
@@ -79,11 +107,8 @@
     for (const r of ranges) {
       if (r.s < i || r.s >= chars.length) continue;
       if (r.s > i) parts.push({ t: 'text', v: chars.slice(i, r.s).join('') });
-      parts.push({
-        t: 'emote',
-        v: `https://static-cdn.jtvnw.net/emoticons/v2/${r.id}/default/dark/2.0`,
-        alt: chars.slice(r.s, r.e + 1).join('')
-      });
+      const image = emoteImage(r.id, target);
+      parts.push({ t: 'emote', v: image.url, alt: chars.slice(r.s, r.e + 1).join(''), h: image.h });
       i = r.e + 1;
     }
     if (i < chars.length) parts.push({ t: 'text', v: chars.slice(i).join('') });
@@ -92,7 +117,9 @@
 
   // features: { badges, avatars } - which API data the overlay will display.
   // notice(text, seconds) shows a status line in the bar, e.g. a sign-in code.
-  function startTwitch({ config, features = {}, emotes, emit, notice, log }) {
+  // target is read on every message, so resizing the source takes effect at
+  // once; avatarPixels is a function for the same reason.
+  function startTwitch({ config, features = {}, emotes, target, avatarPixels = () => 0, emit, notice, log }) {
     const channel = String(config.channel || '').toLowerCase().replace(/^#/, '');
     if (!channel) {
       log('no channel configured - skipping (edit config.js)');
@@ -121,6 +148,15 @@
     }
     const wantBadges = Boolean(api && features.badges);
     const wantAvatars = Boolean(api && features.avatars);
+
+    // Twitch returns the 300x300 profile picture; AVATAR_SIZES also exist. A
+    // size Twitch does not serve would 404, so the wish is snapped to one.
+    const sizedAvatar = (url) => {
+      const wish = Number(avatarPixels()) || 0;
+      if (!url || !wish) return url ?? null;
+      const size = AVATAR_SIZES.reduce((best, px) => (Math.abs(px - wish) < Math.abs(best - wish) ? px : best));
+      return url.replace(/-profile_image-\d+x\d+/, `-profile_image-${size}x${size}`);
+    };
 
     let badgeImages = null;           // "set/version" -> { url, title }
     const avatars = new Map();        // login -> url, or null when the user has none
@@ -151,7 +187,9 @@
 
     function badgesFor(tag) {
       if (!badgeImages || !tag) return [];
-      return tag.split(',').map((entry) => badgeImages[entry]).filter(Boolean);
+      return tag.split(',')
+        .filter((entry) => badgeImages[entry])
+        .map((entry) => ({ ...badgeImages[entry], kind: BADGE_KINDS[entry.split('/')[0]] ?? 'event' }));
     }
 
     // Resolves to the sender's avatar URL or null. Logins requested within 150ms
@@ -181,7 +219,7 @@
       try {
         const query = batch.map(([login]) => `login=${encodeURIComponent(login)}`).join('&');
         users = {};
-        for (const u of (await api.get(`/users?${query}`)).data ?? []) users[u.login] = u.profile_image_url ?? null;
+        for (const u of (await api.get(`/users?${query}`)).data ?? []) users[u.login] = sizedAvatar(u.profile_image_url);
       } catch (err) {
         users = null;
         log(`avatar lookup failed (${err.message})`);
@@ -303,7 +341,7 @@
       }
 
       // A message made up entirely of blocked emotes has nothing left to show.
-      const parts = decorate(buildParts(text, tags.emotes));
+      const parts = decorate(buildParts(text, tags.emotes, target));
       if (!parts.length) return;
 
       queueEvent({

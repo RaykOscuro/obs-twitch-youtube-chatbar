@@ -1,11 +1,13 @@
-// Renders chat events from the Twitch and YouTube sources into the bar.
+// Renders chat events from the Twitch and YouTube sources into the bar or list.
 // Chat text is only inserted with textContent, so it cannot inject markup; keep
 // it that way when changing the row builders below.
 
 const container = document.getElementById('chat');
 const CONFIG = window.CHAT_CONFIG ?? {};
 
-let appearance = {};
+let baseAppearance = {};   // config as written, including the per-layout blocks
+let appearance = {};       // the settings in force for the current layout
+let emotes = null;         // the third-party emote index, once it is built
 
 const PLATFORM_ICONS = {
   twitch: {
@@ -18,13 +20,70 @@ const PLATFORM_ICONS = {
   }
 };
 
+// --------------------------------------------------------------------- layout
+
+// The bar scrolls sideways; the list stacks messages, newest at the bottom.
+// "auto" takes the bar only for sources at least twice as wide as they are tall.
+const BAR_MIN_ASPECT = 2;
+let currentLayout = 'bar';
+
+function layoutFor() {
+  const wanted = baseAppearance.layout ?? 'auto';
+  if (wanted === 'bar' || wanted === 'list') return wanted;
+  return window.innerHeight > 0 && window.innerWidth >= window.innerHeight * BAR_MIN_ASPECT ? 'bar' : 'list';
+}
+
+// appearance.bar and appearance.list hold settings for one layout, so a single
+// config can serve a bar in one scene and a list in another. They override the
+// shared settings while that layout is active; objects are merged key by key.
+function appearanceFor(layout) {
+  const { bar, list, ...shared } = baseAppearance;
+  const override = (layout === 'list' ? list : bar) ?? {};
+  const merged = { ...shared, ...override };
+
+  for (const [key, value] of Object.entries(override)) {
+    const base = shared[key];
+    const mergeable = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    if (mergeable(base) && mergeable(value)) merged[key] = { ...base, ...value };
+  }
+  return merged;
+}
+
+// The edge new messages enter from; older ones leave at the opposite one.
+function newestSide() {
+  const wanted = appearance.newestAt ?? 'auto';
+  if (currentLayout === 'list') return wanted === 'top' ? 'top' : 'bottom';
+  return wanted === 'left' ? 'left' : 'right';
+}
+
+// CSS selects the layout and direction from these attributes.
+function applyLayout() {
+  const previous = currentLayout;
+  currentLayout = layoutFor();
+  appearance = appearanceFor(currentLayout);
+  applyAppearanceVars();
+  document.documentElement.dataset.layout = currentLayout;
+  document.documentElement.dataset.newest = newestSide();
+  // Rows that dropped their name in the bar get it back in the list.
+  if (previous !== currentLayout && currentLayout === 'list') {
+    for (const row of container.querySelectorAll('.message-row[data-continuation]')) {
+      redrawUserBox(row, false);
+      delete row.dataset.continuation;
+    }
+  }
+}
+
 // ------------------------------------------------------------------ appearance
 
-// "auto" (the default) fits the text to a bar-sized browser source: height /
-// 1.75, which leaves room for emotes at 1.3 times the font size. Taller pages,
-// such as a regular browser window or a full-canvas source cropped in OBS, get
-// 24px instead of giant text.
+// "auto" fits the text to the browser source: in the bar its height / 1.75,
+// which leaves room for emotes at 1.3 times the font size; in the list its
+// width / 20, about what a chat panel of that width usually runs. Pages too
+// tall for a bar, such as a regular browser window or a full-canvas source
+// cropped in OBS, get 24px instead of giant text.
 const AUTO_SIZE_MAX_HEIGHT = 200;
+const AUTO_LIST_DIVISOR = 20;
+const AUTO_LIST_MIN = 14;
+const AUTO_LIST_MAX = 32;
 
 function fontSizeFor(font) {
   const size = font.size ?? 'auto';
@@ -32,17 +91,44 @@ function fontSizeFor(font) {
     const px = parseFloat(size);   // 28, "28" and "28px" alike
     return px > 0 ? px : 24;
   }
+  if (currentLayout === 'list') {
+    const width = window.innerWidth;
+    return width > 0 ? Math.min(Math.max(Math.round(width / AUTO_LIST_DIVISOR), AUTO_LIST_MIN), AUTO_LIST_MAX) : 24;
+  }
   const height = window.innerHeight;
   return height > 0 && height <= AUTO_SIZE_MAX_HEIGHT ? Math.max(Math.round(height / 1.75), 1) : 24;
 }
 
+function applyFontSize() {
+  const size = fontSizeFor(appearance.font ?? {});
+  const root = document.documentElement.style;
+  const emote = Math.round(size * EMOTE_HEIGHT_RATIO);
+  root.setProperty('--font-size', `${size}px`);
+  root.setProperty('--emote-size', `${emote}px`);
+  // Rows keep this height whatever they hold, so snapped emotes, which may be a
+  // few pixels taller, do not make the spacing uneven.
+  root.setProperty('--row-height', `${emote + EMOTE_SNAP_PX}px`);
+
+  updateEmoteTarget();
+  emotes?.setTarget(emoteTarget);
+  // Messages already on screen keep their file but follow the new size: their
+  // own height was set for the old one.
+  for (const img of container.querySelectorAll('img.emote')) img.style.height = '';
+}
+
 function applyAppearance(a) {
-  appearance = a ?? {};
+  baseAppearance = a ?? {};
+  applyLayout();
+}
+
+// Writes the current settings onto :root, where overlay.css reads them. Run
+// again after a layout switch, since the layouts can carry different values.
+function applyAppearanceVars() {
   const font = appearance.font ?? {};
   const root = document.documentElement.style;
 
   root.setProperty('--font-family', `'${font.family ?? 'Montserrat'}', sans-serif`);
-  root.setProperty('--font-size', `${fontSizeFor(font)}px`);
+  applyFontSize();
   root.setProperty('--font-weight', String(font.weight ?? 700));
   root.setProperty('--font-color', appearance.fontColor ?? 'rgba(255,255,255,1)');
   root.setProperty('--text-shadow', appearance.textShadow ?? 'none');
@@ -68,12 +154,16 @@ function applyAppearance(a) {
 }
 
 // Percentages cannot resolve against the shrink-to-fit rows, so % caps are
-// converted to pixels against the bar width. Rerun on resize.
+// converted to pixels against the source width. Rerun on resize.
 function updateWidthCaps() {
   const style = getComputedStyle(container);
   const basis = container.clientWidth
     - parseFloat(style.paddingLeft || 0)
     - parseFloat(style.paddingRight || 0);
+
+  // A source in an inactive scene reports no width; keep the last caps until it
+  // is shown again.
+  if (basis <= 0) return;
 
   const resolve = (raw, fallback) => {
     const value = String(raw ?? fallback).trim();
@@ -88,17 +178,27 @@ function updateWidthCaps() {
   root.setProperty('--max-name-width', resolve(appearance.longMessages?.maxNameWidth, '12em'));
 }
 
+// Resizing the source in OBS can also flip between the bar and the list.
 window.addEventListener('resize', () => {
-  // With font.size "auto", the text follows the source height.
-  document.documentElement.style.setProperty('--font-size', `${fontSizeFor(appearance.font ?? {})}px`);
-  updateWidthCaps();
+  applyLayout();
+  trimOverflow();
+});
+
+// Scene changes hide and show the source. Anything that needed measuring while
+// it was hidden is redone here.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  applyLayout();
+  remeasurePending();
   trimOverflow();
 });
 
 // Accepts a stylesheet URL, a font file URL or path, or nothing.
+let loadedFontUrl = null;
 function loadFont(font) {
   const url = font.url;
-  if (!url) return;
+  if (!url || url === loadedFontUrl) return;
+  loadedFontUrl = url;
   const id = 'chat-font-source';
   document.getElementById(id)?.remove();
 
@@ -162,6 +262,53 @@ function shortenName(name) {
   return chars.slice(0, max).join('').trimEnd() + '…';
 }
 
+// Badge groups, most telling first: maxBadges keeps the ones listed earliest.
+const BADGE_KIND_ORDER = ['role', 'subscriber', 'channel', 'account', 'event'];
+const DEFAULT_BADGE_KINDS = { role: true, subscriber: true, channel: false, account: false, event: false };
+
+// Emote height, as a share of the font size. Applied as whole pixels: a
+// fractional height makes the browser resample the image and look soft.
+const EMOTE_HEIGHT_RATIO = 1.3;
+
+// How far an emote file may be from that height and still be used unscaled.
+const EMOTE_SNAP_PX = 4;
+
+// The height emotes should end up at. The sources hold on to this object and
+// read it per message, so it is updated in place whenever the text size changes.
+const emoteTarget = { css: 31, device: 31, dpr: 1, snap: EMOTE_SNAP_PX };
+
+function updateEmoteTarget() {
+  const dpr = window.devicePixelRatio || 1;
+  const css = Math.round(fontSizeFor(appearance.font ?? {}) * EMOTE_HEIGHT_RATIO);
+  Object.assign(emoteTarget, { css, device: Math.round(css * dpr), dpr });
+}
+
+function badgeKinds(from = appearance) {
+  return { ...DEFAULT_BADGE_KINDS, ...(from.badgeKinds ?? {}) };
+}
+
+// True while any badge could appear, so the Twitch API is only used then.
+function badgesEnabled(from = appearance) {
+  return Boolean(from.showBadges) && Object.values(badgeKinds(from)).some(Boolean);
+}
+
+// Either layout can be shown later, so API features are set up when either one
+// asks for them; what is drawn still follows the layout in force.
+function eitherLayout(wants) {
+  return ['bar', 'list'].some((layout) => wants(appearanceFor(layout)));
+}
+
+function badgesToShow(msg) {
+  if (!badgesEnabled()) return [];
+  const kinds = badgeKinds();
+  const chosen = (msg.badges ?? [])
+    .filter((badge) => kinds[badge.kind ?? 'event'])
+    .sort((a, b) => BADGE_KIND_ORDER.indexOf(a.kind ?? 'event') - BADGE_KIND_ORDER.indexOf(b.kind ?? 'event'));
+
+  const max = appearance.maxBadges ?? 2;
+  return max > 0 ? chosen.slice(0, max) : chosen;
+}
+
 // Each row's message, so a continuation can get its name block back later.
 const rowMessages = new WeakMap();
 
@@ -186,23 +333,21 @@ function buildUserBox(msg, repeated) {
       userBox.appendChild(img);
     }
 
-    if (appearance.showBadges) {
-      for (const badge of msg.badges ?? []) {
-        if (badge.url) {
-          const img = document.createElement('img');
-          img.className = 'badge';
-          img.src = badge.url;
-          img.alt = '';
-          img.title = badge.title ?? '';
-          userBox.appendChild(img);
-        } else if (badge.chip) {
-          const chip = document.createElement('span');
-          chip.className = 'badge-chip';
-          chip.style.backgroundColor = badge.color ?? '#888';
-          chip.textContent = badge.chip;
-          chip.title = badge.title ?? '';
-          userBox.appendChild(chip);
-        }
+    for (const badge of badgesToShow(msg)) {
+      if (badge.url) {
+        const img = document.createElement('img');
+        img.className = 'badge';
+        img.src = badge.url;
+        img.alt = '';
+        img.title = badge.title ?? '';
+        userBox.appendChild(img);
+      } else if (badge.chip) {
+        const chip = document.createElement('span');
+        chip.className = 'badge-chip';
+        chip.style.backgroundColor = badge.color ?? '#888';
+        chip.textContent = badge.chip;
+        chip.title = badge.title ?? '';
+        userBox.appendChild(chip);
       }
     }
 
@@ -243,12 +388,15 @@ function buildRow(msg) {
   rowMessages.set(row, msg);
 
   // With repeatNickname false, a message from the chatter of the newest row on
-  // the bar shows continuationMarker instead of the name block. Compared with
-  // the bar itself, since that row may have been deleted or removed meanwhile.
+  // screen shows continuationMarker instead of the name block. Compared with
+  // the rows themselves, since that row may have been deleted or removed
+  // meanwhile. The list has room for the name, so it always shows it.
   const senderKey = `${msg.platform}:${msg.userId}`;
   row.dataset.senderKey = senderKey;
   const newest = container.querySelector('.message-row:not([data-leaving])');
-  const repeated = appearance.repeatNickname === false && newest?.dataset.senderKey === senderKey;
+  const repeated = currentLayout !== 'list'
+    && appearance.repeatNickname === false
+    && newest?.dataset.senderKey === senderKey;
   if (repeated) row.dataset.continuation = '1';
   const userBox = buildUserBox(msg, repeated);
 
@@ -263,6 +411,8 @@ function buildRow(msg) {
       const img = document.createElement('img');
       img.className = 'emote';
       img.src = part.v;
+      // Set when the file matches the wanted height, so it is not resampled.
+      if (part.h) img.style.height = `${part.h}px`;
       img.alt = part.alt ?? '';
       img.title = part.alt ?? '';
       scroller.appendChild(img);
@@ -281,9 +431,23 @@ function buildRow(msg) {
 // Text wider than maxWidth scrolls through scrollPasses times, then rests at
 // the start with an ellipsis.
 function setupLongMessage(row) {
+  // The list wraps long messages, so there is nothing to measure there.
+  if (currentLayout === 'list') {
+    delete row.dataset.remeasure;
+    return;
+  }
+
   const body = row.querySelector('.user-message');
   const scroller = body?.querySelector('.message-scroll');
   if (!body || !scroller) return;
+
+  // Nothing can be measured while the source is hidden, and a zero width would
+  // make every message look over-long; measure again once it is visible.
+  if (body.clientWidth <= 0) {
+    row.dataset.remeasure = '1';
+    return;
+  }
+  delete row.dataset.remeasure;
 
   const overflow = Math.ceil(scroller.scrollWidth - body.clientWidth);
   if (overflow <= 1) return;
@@ -337,8 +501,18 @@ function removeRow(row) {
   setTimeout(() => row.remove(), ms + 100);
 }
 
-// Next row towards the newer (right) or older (left) end, skipping rows that
-// are already leaving.
+// Replaces a row's name block, e.g. when a deletion frees up the name or the
+// layout changes.
+function redrawUserBox(row, repeated) {
+  const msg = rowMessages.get(row);
+  if (!msg) return;
+  row.querySelector('.user-box')?.remove();
+  const userBox = buildUserBox(msg, repeated);
+  if (userBox.childNodes.length) row.prepend(userBox);
+}
+
+// Next row towards the newer or older end of the chat, skipping rows that are
+// already leaving.
 function neighbour(row, direction) {
   let el = row;
   do {
@@ -350,8 +524,8 @@ function neighbour(row, direction) {
 // Removes deleted, purged or expired (hideAfter) rows. A continuation that
 // followed a removed row gets its name block back unless the row before it is
 // still the same chatter's, so a marker is never left without a name. Rows
-// trimmed at the left edge go through removeRow instead: a name appearing
-// there would make the bar jump.
+// trimmed at the far edge go through removeRow instead: a name appearing there
+// would make the overlay jump.
 function removeRows(rows) {
   const affected = new Set();
   for (const row of rows) {
@@ -363,11 +537,7 @@ function removeRows(rows) {
   for (const row of affected) {
     if (row.dataset.leaving || !row.dataset.continuation) continue;
     if (neighbour(row, 'older')?.dataset.senderKey === row.dataset.senderKey) continue;
-    const msg = rowMessages.get(row);
-    if (!msg) continue;
-    row.querySelector('.user-box')?.remove();
-    const userBox = buildUserBox(msg, false);
-    if (userBox.childNodes.length) row.prepend(userBox);
+    redrawUserBox(row, false);
     delete row.dataset.continuation;
   }
 
@@ -375,26 +545,60 @@ function removeRows(rows) {
   if (affected.size) trimOverflow();
 }
 
+// Rows added while the source had no size, measured as soon as it has one.
+// trimOverflow calls this as well, so a missing visibilitychange event cannot
+// leave a row unmeasured for long.
+function remeasurePending() {
+  for (const row of container.querySelectorAll('.message-row[data-remeasure]')) {
+    row.querySelector('.user-message')?.classList.remove('truncated');
+    setupLongMessage(row);
+  }
+}
+
 // Removes rows beyond messagesLimit and, with trimOffscreen, rows that newer
-// messages have pushed fully past the left edge.
+// messages have pushed past the far edge of the source.
 function trimOverflow() {
   const limit = appearance.messagesLimit ?? 50;
-  const byWidth = appearance.trimOffscreen !== false;
-  const barWidth = container.clientWidth;
+  const list = currentLayout === 'list';
+  const space = list ? container.clientHeight : container.clientWidth;
+  // With no space reported the source is hidden, so only the row limit applies.
+  const byExtent = appearance.trimOffscreen !== false && space > 0;
+  if (space > 0) remeasurePending();
   const rows = [...container.querySelectorAll('.message-row:not([data-leaving])')];
 
   let used = 0;
   rows.forEach((row, i) => {
     if (i >= limit) return removeRow(row);
-    // Newer rows already fill the bar; the row straddling the edge is kept.
-    if (byWidth && used >= barWidth) return removeRow(row);
-    used += row.getBoundingClientRect().width;
+    // Newer rows already fill the source; the row straddling the edge is kept.
+    if (byExtent && used >= space) return removeRow(row);
+    const box = row.getBoundingClientRect();
+    used += list ? box.height : box.width;
   });
 }
 
-async function addMessage(msg) {
-  const row = buildRow(msg);
+const SLIDE_IN = { right: 'slideInRight', left: 'slideInLeft', bottom: 'slideInUp', top: 'slideInDown' };
 
+function animationClass() {
+  const anim = appearance.animationIn ?? 'slideInRight';
+  if (!anim || anim === 'none') return null;
+  return `anim-${anim === 'slideInRight' ? SLIDE_IN[newestSide()] : anim}`;
+}
+
+// Rows in the list simply stack; the width reveal is bar-only. Images still
+// load out of flow, so a row does not grow and shove the list while they arrive.
+async function addRowStacked(row) {
+  row.style.position = 'absolute';
+  row.style.visibility = 'hidden';
+  container.prepend(row);
+  await waitForImages(row);
+
+  row.style.position = '';
+  row.style.visibility = '';
+  const anim = animationClass();
+  if (anim) row.classList.add(anim);
+}
+
+async function addRowSliding(row) {
   // Measured out of flow: an in-flow row would push the bar left while its
   // images load, then jump back when the width reveal starts from zero.
   row.style.position = 'absolute';
@@ -408,8 +612,8 @@ async function addMessage(msg) {
   row.style.overflow = 'hidden';
   row.style.width = '0px';
 
-  const anim = appearance.animationIn ?? 'slideInRight';
-  if (anim && anim !== 'none') row.classList.add(`anim-${anim}`);
+  const anim = animationClass();
+  if (anim) row.classList.add(anim);
 
   // Two frames: the first commits width 0, the second starts the transition.
   requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -425,8 +629,22 @@ async function addMessage(msg) {
     setupLongMessage(row);
     trimOverflow();
   }, (appearance.animationDuration ?? 0.5) * 1000 + 60);
+}
 
-  // hideAfter 0 means no timer; the row leaves when pushed off the bar.
+async function addMessage(msg) {
+  const row = buildRow(msg);
+  // A hidden source paints nothing and animation frames never run, so the row
+  // is just placed and measured once the scene is active again.
+  if (document.hidden) {
+    container.prepend(row);
+    row.dataset.remeasure = '1';
+  } else if (currentLayout === 'list') {
+    await addRowStacked(row);
+  } else {
+    await addRowSliding(row);
+  }
+
+  // hideAfter 0 means no timer; the row leaves when pushed off the edge.
   const hideAfter = appearance.hideAfter ?? 0;
   if (hideAfter > 0) setTimeout(() => removeRows([row]), hideAfter * 1000);
 
@@ -517,7 +735,7 @@ function runDemo() {
 
 // --------------------------------------------------------------------- notice
 
-// Shows text pinned to the right end of the bar, hidden again after `seconds`
+// Shows text pinned to the right of the source, hidden again after `seconds`
 // (0 = until replaced). null hides it.
 let noticeTimer = null;
 function showNotice(text, seconds = 0) {
@@ -535,17 +753,22 @@ function start() {
 
   const log = (scope) => (message) => console.log(`[${scope}] ${message}`);
 
-  const emotes = CONFIG.emotes?.enabled === false
+  emotes = CONFIG.emotes?.enabled === false
     ? null
-    : window.createEmoteIndex?.({ config: CONFIG.emotes ?? {}, log: log('emotes') });
+    : window.createEmoteIndex?.({ config: CONFIG.emotes ?? {}, target: emoteTarget, log: log('emotes') });
   emotes?.loadGlobals();
 
   if (CONFIG.twitch?.enabled && window.startTwitch) {
     window.startTwitch({
       config: CONFIG.twitch,
       // Only request API data that will actually be shown.
-      features: { badges: Boolean(appearance.showBadges), avatars: Boolean(appearance.showAvatar) },
+      features: {
+        badges: eitherLayout((a) => badgesEnabled(a)),
+        avatars: eitherLayout((a) => Boolean(a.showAvatar))
+      },
       emotes,
+      target: emoteTarget,
+      avatarPixels: () => Number(appearance.avatarPixels ?? 0),
       emit: receive,
       notice: showNotice,
       log: log('twitch')

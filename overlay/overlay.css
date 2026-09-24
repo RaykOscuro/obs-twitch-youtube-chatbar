@@ -44,7 +44,7 @@ body {
   text-shadow: var(--text-shadow);
 }
 
-/* Fills the browser source; the bar height is the source height. */
+/* Fills the browser source, so its size is the size of the chat. */
 .main-container {
   position: absolute;
   inset: 0;
@@ -57,12 +57,12 @@ body {
   padding-right: var(--pad-right);
   box-sizing: border-box;
 
-  /* Fades messages out at the left edge. */
+  /* Fades messages out at the edge they leave by. */
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left));
   mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left));
 }
 
-/* Status line over the right end of the bar, e.g. a Twitch sign-in code. */
+/* Status line over the right of the source, e.g. a Twitch sign-in code. */
 .notice {
   position: absolute;
   top: 0;
@@ -83,6 +83,64 @@ body {
   display: none;
 }
 
+/* List layout: a vertical chat panel with the newest message at the bottom.
+   column-reverse keeps the same "newest row first in the DOM" order as the bar,
+   so the renderer treats both layouts alike. */
+:root[data-layout='list'] .main-container {
+  flex-direction: column-reverse;
+  align-items: stretch;
+  white-space: normal;
+  padding: 0 var(--pad-right);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-left));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-left));
+}
+
+/* Block rows with an inline name box, so long messages wrap under the name
+   instead of being capped and scrolled. */
+:root[data-layout='list'] .message-row {
+  display: block;
+  white-space: normal;
+  padding: 2px 0;
+}
+
+:root[data-layout='list'] .user-box {
+  display: inline-flex;
+  vertical-align: baseline;
+  margin-right: 0.3em;
+}
+
+:root[data-layout='list'] .user-message {
+  display: inline;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+:root[data-layout='list'] .message-scroll {
+  display: inline;
+}
+
+:root[data-layout='list'] .user-name {
+  max-width: none;
+}
+
+/* Direction, from appearance.newestAt: new messages enter at the right in the
+   bar and at the bottom in the list unless flipped here. The fade and the
+   padding follow the edges they belong to. */
+:root[data-newest='left'] .main-container {
+  flex-direction: row;
+  padding-right: 0;
+  padding-left: var(--pad-right);
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--fade-left));
+  mask-image: linear-gradient(to left, transparent 0, #000 var(--fade-left));
+}
+
+:root[data-newest='top'] .main-container {
+  flex-direction: column;
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 var(--fade-left));
+  mask-image: linear-gradient(to top, transparent 0, #000 var(--fade-left));
+}
+
 /* New rows are prepended and, with row-reverse, sit rightmost. flex: 0 0 auto
    keeps rows from shrinking instead of overflowing. */
 .message-row {
@@ -91,6 +149,7 @@ body {
   align-items: center;
   padding: 2px 4px;
   font-size: var(--font-size);
+  min-height: var(--row-height, auto);
 }
 
 .message-row.leaving {
@@ -99,8 +158,21 @@ body {
   opacity: 0;
 }
 
+/* Leaving rows slide out at the edge they are pushed towards. */
 .message-row.leaving.slide {
   transform: translateX(40px);
+}
+
+:root[data-newest='left'] .message-row.leaving.slide {
+  transform: translateX(-40px);
+}
+
+:root[data-newest='bottom'] .message-row.leaving.slide {
+  transform: translateY(-40px);
+}
+
+:root[data-newest='top'] .message-row.leaving.slide {
+  transform: translateY(40px);
 }
 
 .message-row.leaving.bounce {
@@ -167,8 +239,8 @@ body {
   opacity: 0.85;
 }
 
-/* Optional divider between messages, off unless messageDivider.style is set.
-   It hangs on the left of each row, so the leftmost (oldest) row skips it. */
+/* Optional divider between messages in the bar, off unless messageDivider.style
+   is set. It hangs at the start of each row, between it and the older one. */
 .main-container[data-divider='line'] .message-row::before,
 .main-container[data-divider='dot'] .message-row::before {
   content: '';
@@ -190,7 +262,18 @@ body {
   background: var(--divider-color);
 }
 
+/* The row at the far edge has nothing beyond it to be separated from, which is
+   the last row in the DOM normally and the first one when the flow is
+   reversed. */
 .main-container .message-row:last-child::before {
+  display: none;
+}
+
+:root[data-newest='left'] .main-container .message-row:last-child::before {
+  display: block;
+}
+
+:root[data-newest='left'] .main-container .message-row:first-child::before {
   display: none;
 }
 
@@ -224,10 +307,8 @@ body {
 
 .badge {
   display: inline-block;
-  position: relative;
   height: 1em;
   vertical-align: middle;
-  top: -2px;
   margin-right: 0.15em;
 }
 
@@ -236,8 +317,6 @@ body {
 .badge-chip {
   display: inline-block;
   vertical-align: middle;
-  top: -2px;
-  position: relative;
   margin-right: 0.25em;
   padding: 0 0.35em;
   border-radius: 3px;
@@ -254,14 +333,13 @@ body {
   width: 0.85em;
   vertical-align: middle;
   margin-right: 0.25em;
-  top: -1px;
-  position: relative;
 }
 
+/* Whole pixels, set by overlay.js; the fallback keeps the ratio. */
 .emote {
   display: inline-block;
   position: relative;
-  height: 1.3em;
+  height: var(--emote-size, 1.3em);
   vertical-align: middle;
   margin: 0 0.05em;
 }
@@ -279,6 +357,21 @@ body {
   to { opacity: 1; transform: translateX(0); }
 }
 
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes bounceIn {
   0% { opacity: 0; transform: scale(0.3); }
   60% { opacity: 1; transform: scale(1.08); }
@@ -287,4 +380,7 @@ body {
 
 .anim-fadeIn { animation: fadeIn var(--anim-duration) ease-out; }
 .anim-slideInRight { animation: slideInRight var(--anim-duration) cubic-bezier(0.16, 1, 0.3, 1); }
+.anim-slideInLeft { animation: slideInLeft var(--anim-duration) cubic-bezier(0.16, 1, 0.3, 1); }
+.anim-slideInUp { animation: slideInUp var(--anim-duration) cubic-bezier(0.16, 1, 0.3, 1); }
+.anim-slideInDown { animation: slideInDown var(--anim-duration) cubic-bezier(0.16, 1, 0.3, 1); }
 .anim-bounceIn { animation: bounceIn var(--anim-duration) ease-out; }
