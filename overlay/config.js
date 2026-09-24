@@ -42,7 +42,9 @@ window.CHAT_CONFIG = {
     "blocklist": [],
     // "hide" removes a blocked emote, "text" shows its name instead. A message
     // made up only of blocked emotes is dropped.
-    "blockedRender": "hide"
+    "blockedRender": "hide",
+    // Cheermote images for bits, e.g. Cheer100. Needs twitch.apiFeatures.
+    "cheermotes": true
   },
   "filters": {
     // Drop messages starting with "!".
@@ -50,7 +52,11 @@ window.CHAT_CONFIG = {
     // Comma-separated display names to ignore, e.g. bots. Case-insensitive.
     "ignoredUsers": "",
     // Drop messages shorter than this many characters; 0 disables.
-    "ignoreShorterThan": 0
+    "ignoreShorterThan": 0,
+    // Show events as highlighted rows: Twitch subs, gift subs and raids,
+    // YouTube memberships and gift memberships. Announcements, Super Chats and
+    // Super Stickers carry a viewer's own message and are always shown.
+    "showEvents": true
   },
   "appearance": {
     // "bar" scrolls sideways, "list" stacks messages with the newest at the
@@ -76,8 +82,9 @@ window.CHAT_CONFIG = {
     "textShadow": "rgb(0, 0, 0) 1px 1px 1px",
     // Background; covers the whole browser source.
     "bgColor": "rgba(0, 0, 0, 0.2)",
-    // Background of highlighted Twitch messages and YouTube Super Chats.
-    "highlightColor": "#A400FF",
+    // Background of highlighted rows: announcements, subs, raids, Super Chats,
+    // memberships and stickers. Translucent, so the scene stays visible.
+    "highlightColor": "rgba(164, 0, 255, 0.55)",
     // "user" = the chatter's own colour (generated where none is set),
     // "custom" = customNickColor, "messagecolor" = same as fontColor.
     "nickColor": "user",

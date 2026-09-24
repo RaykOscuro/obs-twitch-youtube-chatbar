@@ -374,23 +374,38 @@ function badgesFromAuthor(authorBadges = []) {
   return out;
 }
 
+// Chat items worth showing: ordinary messages, Super Chats, Super Stickers,
+// memberships and membership gifts. A gift keeps its details in a header.
 function normalize(action) {
   const item = action.addChatItemAction?.item;
   if (!item) return null;
 
+  const sticker = item.liveChatPaidStickerRenderer;
+  const gift = item.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer;
+  const giftHeader = gift?.header?.liveChatSponsorshipsHeaderRenderer;
+
   const r = item.liveChatTextMessageRenderer
     ?? item.liveChatPaidMessageRenderer
-    ?? item.liveChatMembershipItemRenderer;
+    ?? sticker
+    ?? item.liveChatMembershipItemRenderer
+    ?? item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer
+    ?? (giftHeader && { ...giftHeader, id: gift.id, timestampUsec: gift.timestampUsec, authorExternalChannelId: gift.authorExternalChannelId });
   if (!r) return null;
 
   const isPaid = Boolean(item.liveChatPaidMessageRenderer);
   const isMember = Boolean(item.liveChatMembershipItemRenderer);
+  const isGift = Boolean(gift || item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer);
 
-  let parts = textPartsFromRuns(r.message?.runs);
+  let parts = textPartsFromRuns(r.message?.runs ?? r.primaryText?.runs);
   if (isMember && !parts.length) parts = textPartsFromRuns(r.headerSubtext?.runs);
-  if (isPaid) {
+  if (isPaid || sticker) {
     const amount = r.purchaseAmountText?.simpleText;
     if (amount) parts.unshift({ t: 'text', v: `[${amount}] ` });
+  }
+  if (sticker) {
+    const thumbs = sticker.sticker?.thumbnails ?? [];
+    const url = thumbs[thumbs.length - 1]?.url;
+    if (url) parts.push({ t: 'emote', v: url.startsWith('//') ? `https:${url}` : url, alt: 'sticker' });
   }
   if (!parts.length) return null;
 
@@ -408,7 +423,10 @@ function normalize(action) {
     parts,
     rawText: parts.map((p) => (p.t === 'text' ? p.v : p.alt)).join(''),
     isAction: false,
-    highlight: isPaid || isMember,
+    highlight: isPaid || isMember || isGift || Boolean(sticker),
+    // Not chat: the overlay can hide these with filters.showEvents. Stickers
+    // count as messages, like Super Chats: both are a viewer paying to be seen.
+    isEvent: isMember || isGift,
     // Send time in ms, used by the client to space out batches.
     ts: Number(r.timestampUsec ?? 0) / 1000 || 0
   };

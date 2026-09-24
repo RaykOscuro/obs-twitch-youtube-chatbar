@@ -12,6 +12,8 @@ Plain HTML, CSS and JavaScript: no build step and no npm packages. Chat is read 
 - Long messages scroll through and then truncate in the bar, and wrap in the list
 - In the bar, a chatter's next message drops the repeated name and shows a marker
 - YouTube messages are replayed with their original timing instead of arriving in bursts
+- Announcements, subs, gift subs and raids from Twitch, memberships, gifts and Super Stickers from YouTube, with gift bombs folded into one row
+- Cheermote images for bits, when the Twitch API is signed in
 - Moderator deletions, timeouts and bans remove messages from the overlay
 - Old messages are trimmed once they leave the source, so it stays filled
 - Optional Twitch badges and profile pictures after a one-time sign-in with a code
@@ -45,7 +47,7 @@ After editing `config.js`, refresh the browser source (right-click → *Refresh*
 
 ### Previewing without live chat
 
-Open the overlay in a regular browser with `?demo=1` added to the URL. It plays a scripted set of sample messages (a repeated sender, an emote, a highlighted message, an over-long name and text) for checking the styling.
+Open the overlay in a regular browser with `?demo=1` added to the URL. It plays a scripted set of sample messages for checking the styling: a repeated sender, an emote, an over-long name and text, a Super Chat, an announcement, a sub, a raid, a cheer and a Super Sticker. The events obey `filters.showEvents`, so it also shows what that setting does.
 
 ## Twitch badges and avatars
 
@@ -65,6 +67,23 @@ The approval page shows the name of the Twitch application the overlay signs in 
 
 The overlay comes with that application's Client ID, so there is nothing to register. To use your own application instead, register one at <https://dev.twitch.tv/console/apps> with the client type **Public** and put its Client ID in `twitch.clientId`.
 
+## Events and cheers
+
+Besides chat, the overlay shows:
+
+| Event | Platform | Shown as |
+|---|---|---|
+| Announcement | Twitch | The message itself, highlighted |
+| Sub, resub, gift sub, raid | Twitch | A highlighted row with Twitch's own wording, plus the chatter's resub message if there is one |
+| Super Chat, Super Sticker | YouTube | The amount, the message or the sticker image, highlighted |
+| Membership, gifted memberships | YouTube | A highlighted row |
+
+A community gift sub sends one bomb notice plus one per recipient, so the recipients are folded into the bomb for 30 seconds. A 20-sub bomb is one row, not 21.
+
+`filters.showEvents: false` hides the rows that are not chat: subs, gift subs, raids, memberships and gifts. Announcements, Super Chats and Super Stickers stay, since each carries something a viewer sent.
+
+Bits become cheermote images, so `Cheer100` renders as the animated cheermote with the amount next to it. That needs the Twitch sign-in (`twitch.apiFeatures`); without it the text is left alone, and `emotes.cheermotes: false` turns it off.
+
 ## Relay options
 
 - **Cloudflare Worker**: deployed once on the free plan, nothing runs locally.
@@ -81,7 +100,7 @@ All settings live in `overlay/config.js`, grouped as:
 | `twitch` | Channel, on/off, optional badges and avatars |
 | `youtube` | Channel or pinned video, relay address, burst pacing, offline re-check interval |
 | `emotes` | Which providers load, blocklist, how blocked emotes render |
-| `filters` | Hiding `!commands`, ignored users, minimum message length |
+| `filters` | Hiding `!commands`, ignored users, minimum message length, events |
 | `appearance` | Layout and direction, font, colours, badges and avatars, animations, long-message behaviour, trimming |
 
 The file is JavaScript, not JSON: keep quotes and commas intact when editing. A typo stops the whole overlay; opening it in a regular browser shows the error in the console (F12).

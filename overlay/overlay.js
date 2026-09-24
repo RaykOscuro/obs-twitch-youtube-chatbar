@@ -133,7 +133,7 @@ function applyAppearanceVars() {
   root.setProperty('--font-color', appearance.fontColor ?? 'rgba(255,255,255,1)');
   root.setProperty('--text-shadow', appearance.textShadow ?? 'none');
   root.setProperty('--bg-color', appearance.bgColor ?? 'transparent');
-  root.setProperty('--highlight-color', appearance.highlightColor ?? '#A400FF');
+  root.setProperty('--highlight-color', appearance.highlightColor ?? 'rgba(164, 0, 255, 0.55)');
   root.setProperty('--pad-right', `${appearance.paddingRight ?? 8}px`);
   // Defaults to paddingRight so both edges match.
   root.setProperty('--fade-left', `${appearance.fadeLeft ?? appearance.paddingRight ?? 8}px`);
@@ -686,6 +686,9 @@ function shouldDrop(event) {
   if (event.type !== 'message') return false;
   const f = CONFIG.filters ?? {};
 
+  // Subs, raids, gift memberships and Super Stickers, as opposed to chat.
+  if (event.isEvent && f.showEvents === false) return true;
+
   if (f.hideCommands && event.rawText.trim().startsWith('!')) return true;
   if (f.ignoreShorterThan && event.rawText.trim().length < f.ignoreShorterThan) return true;
 
@@ -706,6 +709,12 @@ function receive(event) {
 // without waiting for live chat.
 function runDemo() {
   const KAPPA = 'https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/2.0';
+  const CHEER = 'https://d3aqoihi2n8ty8.cloudfront.net/actions/cheer/dark/animated/100/2.gif';
+  const STICKER = 'data:image/svg+xml,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">'
+    + '<circle cx="32" cy="32" r="30" fill="#ffca28"/><circle cx="22" cy="26" r="5"/>'
+    + '<circle cx="42" cy="26" r="5"/><path d="M18 40a16 12 0 0 0 28 0" fill="#c1440e"/></svg>');
+
   const samples = [
     { platform: 'twitch', displayName: 'Chatter', color: '#00FF7F',
       parts: [{ t: 'text', v: 'first message' }] },
@@ -718,7 +727,19 @@ function runDemo() {
     { platform: 'youtube', displayName: 'Supporter', color: '', highlight: true,
       parts: [{ t: 'text', v: '[$5.00] nice stream' }] },
     { platform: 'twitch', displayName: 'AbsurdlyLongDisplayNameHere', color: '#FFAA00',
-      parts: [{ t: 'text', v: 'a deliberately long message that has to scroll before it settles down' }] }
+      parts: [{ t: 'text', v: 'a deliberately long message that has to scroll before it settles down' }] },
+    { platform: 'twitch', displayName: 'Moderator', color: '#00B5AD', highlight: true,
+      parts: [{ t: 'text', v: 'announcements look like this' }] },
+    { platform: 'twitch', displayName: 'Subscriber', color: '#FF4500', highlight: true, isEvent: true,
+      parts: [{ t: 'text', v: 'subscribed for 6 months! - still here' }] },
+    { platform: 'twitch', displayName: 'Raider', color: '#1E90FF', highlight: true, isEvent: true,
+      parts: [{ t: 'text', v: 'raiding with 12 viewers' }] },
+    { platform: 'twitch', displayName: 'Gifter', color: '#FF69B4', highlight: true, isEvent: true,
+      parts: [{ t: 'text', v: 'is gifting 20 subs to the community!' }] },
+    { platform: 'twitch', displayName: 'Cheerer', color: '#9146FF',
+      parts: [{ t: 'emote', v: CHEER, alt: 'Cheer100' }, { t: 'text', v: '100 have fun' }] },
+    { platform: 'youtube', displayName: 'StickerFan', color: '', highlight: true,
+      parts: [{ t: 'text', v: '[2,00 EUR] ' }, { t: 'emote', v: STICKER, alt: 'sticker' }] }
   ];
 
   samples.forEach((sample, i) => {
@@ -726,7 +747,7 @@ function runDemo() {
       type: 'message',
       id: `demo-${i}`,
       userId: `demo-${sample.displayName.toLowerCase()}`,
-      badges: [], avatar: null, isAction: false, highlight: false,
+      badges: [], avatar: null, isAction: false, highlight: false, isEvent: false,
       rawText: sample.parts.map((p) => (p.t === 'text' ? p.v : p.alt)).join(''),
       ...sample
     }), 400 + i * 700);
@@ -764,7 +785,8 @@ function start() {
       // Only request API data that will actually be shown.
       features: {
         badges: eitherLayout((a) => badgesEnabled(a)),
-        avatars: eitherLayout((a) => Boolean(a.showAvatar))
+        avatars: eitherLayout((a) => Boolean(a.showAvatar)),
+        cheermotes: CONFIG.emotes?.enabled !== false && CONFIG.emotes?.cheermotes !== false
       },
       emotes,
       target: emoteTarget,

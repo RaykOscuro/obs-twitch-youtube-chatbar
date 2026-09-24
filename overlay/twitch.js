@@ -69,6 +69,19 @@
     return { tags, prefix, command: params.shift(), params };
   }
 
+  // USERNOTICE kinds shown as events; their wording comes in system-msg.
+  // Announcements are handled apart, as ordinary messages.
+  const EVENT_NOTICES = new Set([
+    'sub', 'resub', 'subgift', 'anonsubgift', 'submysterygift', 'giftpaidupgrade',
+    'anongiftpaidupgrade', 'primepaidupgrade', 'standardpayforward', 'communitypayforward',
+    'raid', 'bitsbadgetier', 'viewermilestone'
+  ]);
+
+  // A community gift sends one bomb notice and then one notice per recipient.
+  // The recipients are folded into the bomb for this long, so a 20-sub bomb
+  // does not push every chat message off the bar.
+  const GIFT_BOMB_MS = 30000;
+
   // Twitch renders every emote at these heights.
   const EMOTE_FILES = [[28, '1.0'], [56, '2.0'], [112, '3.0']];
   // The profile picture sizes Twitch serves.
@@ -139,15 +152,16 @@
     // ------------------------------------------------ optional API features
 
     let api = null;
-    if (config.apiFeatures && (features.badges || features.avatars)) {
+    if (config.apiFeatures && (features.badges || features.avatars || features.cheermotes)) {
       if (!config.clientId) {
-        log('apiFeatures needs twitch.clientId - badges and avatars off');
-        notice?.('Twitch badges and avatars need twitch.clientId in config.js', 120);
+        log('apiFeatures needs twitch.clientId - badges, avatars and cheermotes off');
+        notice?.('Twitch badges, avatars and cheermotes need twitch.clientId in config.js', 120);
       }
       else api = window.createTwitchApi({ clientId: config.clientId, notice, log });
     }
     const wantBadges = Boolean(api && features.badges);
     const wantAvatars = Boolean(api && features.avatars);
+    const wantCheermotes = Boolean(api && features.cheermotes);
 
     // Twitch returns the 300x300 profile picture; AVATAR_SIZES also exist. A
     // size Twitch does not serve would 404, so the wish is snapped to one.
@@ -233,13 +247,61 @@
       if (avatars.size > 5000) avatars.clear();
     }
 
+    // Cheermote images per prefix, e.g. "cheer" for Cheer100, biggest tier first.
+    let cheermotes = null;
+
+    async function loadCheermotes(id) {
+      if (!wantCheermotes || !api.signedIn || !id) return;
+      try {
+        const data = await api.get(`/bits/cheermotes?broadcaster_id=${encodeURIComponent(id)}`);
+        const found = new Map();
+        for (const action of data.data ?? []) {
+          const tiers = (action.tiers ?? [])
+            .map((tier) => ({
+              bits: Number(tier.min_bits) || 0,
+              url: tier.images?.dark?.animated?.['2'] ?? tier.images?.dark?.static?.['2']
+            }))
+            .filter((tier) => tier.url)
+            .sort((a, b) => b.bits - a.bits);
+          if (tiers.length) found.set(String(action.prefix).toLowerCase(), tiers);
+        }
+        cheermotes = found;
+        log(`${found.size} cheermotes`);
+      } catch (err) {
+        log(`cheermotes unavailable (${err.message})`);
+      }
+    }
+
+    // Replaces "Cheer100" with the matching cheermote image and the amount.
+    function withCheermotes(parts) {
+      if (!cheermotes) return parts;
+      const out = [];
+      for (const part of parts) {
+        if (part.t !== 'text') {
+          out.push(part);
+          continue;
+        }
+        for (const token of part.v.split(/(\s+)/)) {
+          const cheer = /^([a-zA-Z]+)(\d+)$/.exec(token);
+          const tier = cheer && cheermotes.get(cheer[1].toLowerCase())?.find((t) => Number(cheer[2]) >= t.bits);
+          if (tier) out.push({ t: 'emote', v: tier.url, alt: token }, { t: 'text', v: cheer[2] });
+          else out.push({ t: 'text', v: token });
+        }
+      }
+      return out;
+    }
+
     function loadChannelData(id) {
       emotes?.loadChannel(id);
       loadBadges(id);
+      loadCheermotes(id);
     }
 
-    // Badges requested before sign-in are loaded once it completes.
-    api?.onReady(() => loadBadges(roomId));
+    // Data requested before sign-in is loaded once it completes.
+    api?.onReady(() => {
+      loadBadges(roomId);
+      loadCheermotes(roomId);
+    });
 
     // Events leave in arrival order. A message may wait up to AVATAR_WAIT_MS for
     // its avatar, and later events wait behind it, so deletions stay in order.
@@ -325,6 +387,7 @@
           ? { type: 'purge', platform: 'twitch', userId: target }
           : { type: 'clear', platform: 'twitch' });
       }
+      if (command === 'USERNOTICE') return handleUserNotice(tags, params);
       if (command !== 'PRIVMSG') return;
 
       if (!roomId && tags['room-id']) {
@@ -341,22 +404,98 @@
       }
 
       // A message made up entirely of blocked emotes has nothing left to show.
-      const parts = decorate(buildParts(text, tags.emotes, target));
+      let parts = decorate(buildParts(text, tags.emotes, target));
+      if (tags.bits) parts = withCheermotes(parts);
       if (!parts.length) return;
 
+      emitMessage({
+        tags,
+        login,
+        name: tags['display-name'] || login,
+        parts,
+        rawText: text,
+        isAction,
+        highlight: tags['msg-id'] === 'highlighted-message'
+      });
+    }
+
+    // Announcements are ordinary messages, highlighted. Subs, gifts and raids
+    // are events: system-msg holds the wording, and the chatter may add a
+    // message of their own.
+    function handleUserNotice(tags, params) {
+      const kind = tags['msg-id'] ?? '';
+      const login = tags.login ?? '';
+      const name = tags['display-name'] || login;
+      const own = params[1] ?? '';
+
+      if (kind === 'announcement') {
+        const parts = decorate(buildParts(own, tags.emotes, target));
+        if (parts.length) emitMessage({ tags, login, name, parts, rawText: own, highlight: true });
+        return;
+      }
+      if (!EVENT_NOTICES.has(kind)) return;
+      if (partOfGiftBomb(kind, tags, login)) return;
+
+      // system-msg opens with the chatter's name, which the row shows already.
+      const system = String(tags['system-msg'] ?? '').trim();
+      let summary = system.startsWith(name) ? system.slice(name.length).trim() : system;
+      // The raid wording carries the name in the middle instead.
+      if (kind === 'raid') {
+        const viewers = Number(tags['msg-param-viewerCount']) || 0;
+        summary = viewers ? `raiding with ${viewers} viewers` : 'raiding';
+      }
+
+      const parts = [{ t: 'text', v: summary || kind }];
+      if (own) parts.push({ t: 'text', v: ' - ' }, ...decorate(buildParts(own, tags.emotes, target)));
+
+      emitMessage({
+        tags,
+        login,
+        name,
+        parts,
+        rawText: own ? `${summary} ${own}` : summary,
+        highlight: true,
+        isEvent: true
+      });
+    }
+
+    // Gift bombs by community-gift id when Twitch sends one, otherwise by the
+    // gifter's login. The bomb row is shown; the recipients it announced are not.
+    const giftBombs = new Map();
+
+    function partOfGiftBomb(kind, tags, login) {
+      const key = tags['msg-param-community-gift-id'] || login || '';
+      if (!key) return false;
+      const now = Date.now();
+
+      if (kind === 'submysterygift') {
+        giftBombs.set(key, { left: Number(tags['msg-param-mass-gift-count']) || 0, at: now });
+        return false;
+      }
+      if (kind !== 'subgift' && kind !== 'anonsubgift') return false;
+
+      const bomb = giftBombs.get(key);
+      if (!bomb || now - bomb.at > GIFT_BOMB_MS || bomb.left <= 0) return false;
+      bomb.left -= 1;
+      if (bomb.left <= 0) giftBombs.delete(key);
+      return true;
+    }
+
+    function emitMessage({ tags, login, name, parts, rawText, isAction = false, highlight = false, isEvent = false }) {
       queueEvent({
         type: 'message',
         platform: 'twitch',
         id: tags.id || `${Date.now()}-${Math.random()}`,
         userId: tags['user-id'] || login,
-        displayName: tags['display-name'] || login,
+        displayName: name,
         color: tags.color || '',
         badges: badgesFor(tags.badges),
         avatar: null,
         parts,
-        rawText: text,
+        rawText,
         isAction,
-        highlight: tags['msg-id'] === 'highlighted-message'
+        highlight,
+        isEvent
       }, wantAvatars && api.signedIn ? avatarFor(login) : null);
     }
 
