@@ -69,8 +69,9 @@ function createEmoteIndex({ config = {}, target, log = () => {} } = {}) {
   const sources = new Map();       // source label -> Map(emote name -> files)
   let emoteImages = new Map();     // merged view used by decorate
   let blockedSeen = new Set();
-  const patterns = (config.blocklist ?? [])
-    .map((p) => String(p).toLowerCase())
+  // A list, or a comma-separated string, which is what a URL override gives.
+  const patterns = (Array.isArray(config.blocklist) ? config.blocklist : String(config.blocklist ?? '').split(','))
+    .map((p) => String(p).trim().toLowerCase())
     .filter(Boolean);
   const hideBlocked = config.blockedRender === 'hide';
 

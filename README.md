@@ -105,6 +105,20 @@ All settings live in `overlay/config.js`, grouped as:
 
 The file is JavaScript, not JSON: keep quotes and commas intact when editing. A typo stops the whole overlay; opening it in a regular browser shows the error in the console (F12).
 
+### Per-source settings in the URL
+
+Any setting can also be given in the browser source's URL, which is the easiest way to run several sources from one `config.js`:
+
+```
+overlay/index.html?layout=list&newestAt=top
+overlay/index.html?twitch.channel=someone&appearance.font.size=18
+overlay/index.html?filters.showEvents=false
+```
+
+A key without a dot addresses `appearance`, so `?layout=list` and `?appearance.layout=list` mean the same. Dotted keys reach the other sections: `twitch`, `youtube`, `emotes` and `filters`. `true`, `false` and numbers are read as such, everything else as text, and unknown sections are ignored.
+
+OBS's **Local file** checkbox builds the URL itself and leaves no room for a query, so a source that needs overrides has to use the URL field with a `file:///` address (spaces written as `%20`).
+
 ## Layout
 
 `appearance.layout` picks how messages are arranged:

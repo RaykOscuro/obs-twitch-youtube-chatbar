@@ -3,7 +3,37 @@
 // it that way when changing the row builders below.
 
 const container = document.getElementById('chat');
-const CONFIG = window.CHAT_CONFIG ?? {};
+
+// Settings can also come from the page URL, so several browser sources can
+// share one config.js: ?twitch.channel=name, ?appearance.font.size=18. Keys
+// without a dot address appearance, e.g. ?layout=list&newestAt=top.
+const CONFIG_SECTIONS = ['twitch', 'youtube', 'emotes', 'filters', 'appearance'];
+// Walking these would write onto Object.prototype instead of the config.
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function settingFromText(value) {
+  if (value === 'true' || value === 'false') return value === 'true';
+  if (value !== '' && Number.isFinite(Number(value))) return Number(value);
+  return value;
+}
+
+function withUrlOverrides(config) {
+  for (const [key, value] of new URLSearchParams(location.search)) {
+    const path = key.includes('.') ? key.split('.') : ['appearance', key];
+    if (!CONFIG_SECTIONS.includes(path[0]) || path.length > 4) continue;
+    if (path.some((step) => UNSAFE_KEYS.has(step))) continue;
+
+    let holder = config;
+    for (const step of path.slice(0, -1)) {
+      if (typeof holder[step] !== 'object' || holder[step] === null) holder[step] = {};
+      holder = holder[step];
+    }
+    holder[path.at(-1)] = settingFromText(value);
+  }
+  return config;
+}
+
+const CONFIG = withUrlOverrides(window.CHAT_CONFIG ?? {});
 
 let baseAppearance = {};   // config as written, including the per-layout blocks
 let appearance = {};       // the settings in force for the current layout

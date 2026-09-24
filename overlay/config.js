@@ -38,7 +38,8 @@ window.CHAT_CONFIG = {
     "bttv": true,
     "ffz": true,
     // Case-insensitive substrings matched against emote names, not message
-    // text. ["pepe"] also blocks "PepeLaugh".
+    // text. ["pepe"] also blocks "PepeLaugh". A comma-separated string works
+    // too, which is what a URL override can pass.
     "blocklist": [],
     // "hide" removes a blocked emote, "text" shows its name instead. A message
     // made up only of blocked emotes is dropped.
